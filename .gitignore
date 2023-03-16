@@ -1,0 +1,12 @@
+.DS_Store
+/target
+**/*.rs.bk
+Cargo.lock
+bin/
+pkg/
+wasm-pack.log
+
+tests/searchlite.d.ts
+tests/searchlite.js
+tests/searchlite_bg.wasm
+tests/searchlite_bg.wasm.d.ts

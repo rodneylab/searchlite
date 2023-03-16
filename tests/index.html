@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>Searchlite web test</title>
+  </head>
+  <body>
+    <script type="module">
+      import init, {
+        highlight_search_terms as highlight,
+      } from "./searchlite.js";
+      await init();
+      const highlightedHtml = highlight(
+        "<h2>Heading</h2><p>Nobody likes maple in their apple flavoured Snapple. APPLE</p>",
+        "apple"
+      );
+      const element = document.getElementById("app");
+      element.innerHTML=highlightedHtml;
+    </script>
+    <div id="app"></div>
+  </body>
+</html>
