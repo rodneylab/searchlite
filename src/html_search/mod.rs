@@ -1,3 +1,27 @@
+// Based on ammonia (https://github.com/rust-ammonia/ammonia)
+//
+// License for ammonia:
+//
+// Copyright (c) 2015-2022 The ammonia Developers
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 mod dom;
 
 #[cfg(test)]
@@ -41,6 +65,7 @@ impl<'a> Builder<'a> {
 
     pub fn search_dom(&self, mut dom: RcDom) -> Document {
         let mut stack = Vec::new();
+        let mut removed = Vec::new();
 
         let body = {
             let children = dom.document.children.borrow();
@@ -62,17 +87,11 @@ impl<'a> Builder<'a> {
                     if let Some(value) =
                         self.replacement_node(&mut node, &mut dom, &mut already_matched)
                     {
-                        // unload existing children to temporary node
-                        let temp_node = Node::new(NodeData::Element {
-                            name: QualName::new(None, ns!(), local_name!("div")),
-                            attrs: RefCell::new(vec![]),
-                            template_contents: RefCell::new(None),
-                            mathml_annotation_xml_integration_point: false,
-                        });
-                        dom.reparent_children(&node, &temp_node);
-
-                        // add replacement children to node
-                        dom.reparent_children(&value, &node);
+                        // node should be a TextNode and so have no children to check so OK to
+                        // continue here
+                        dom.reparent_children(&value, &parent);
+                        removed.push(node);
+                        continue;
                     };
                 };
                 dom.append(&parent.clone(), NodeOrText::AppendNode(node.clone()));
@@ -86,6 +105,9 @@ impl<'a> Builder<'a> {
                     .into_iter()
                     .rev(),
             );
+        }
+        while let Some(node) = removed.pop() {
+            removed.extend_from_slice(&mem::take(&mut *node.children.borrow_mut())[..]);
         }
         Document(dom)
     }
@@ -107,154 +129,72 @@ impl<'a> Builder<'a> {
         dom: &mut RcDom,
         already_matched: &mut bool,
     ) -> Option<Rc<Node>> {
-        if let NodeData::Element { ref name, .. } = child.data {
-            let child_local_name = &*name.local;
-            if child_local_name != "mark" {
-                let replacement_node = Node::new(NodeData::Element {
-                    name: QualName::new(None, ns!(), name.local.clone()),
-                    attrs: RefCell::new(vec![]),
-                    template_contents: RefCell::new(None),
-                    mathml_annotation_xml_integration_point: false,
+        if let NodeData::Text { ref contents, .. } = child.data {
+            let replacement_node = Node::new(NodeData::Element {
+                name: QualName::new(None, ns!(), "div".into()),
+                attrs: RefCell::new(vec![]),
+                template_contents: RefCell::new(None),
+                mathml_annotation_xml_integration_point: false,
+            });
+            let search_pattern: Vec<&str> = self.search_term?.split(' ').collect();
+            let ac = AhoCorasickBuilder::new()
+                .ascii_case_insensitive(true)
+                .build(search_pattern);
+            let mut matches = vec![];
+            let search_content = contents.borrow();
+            for search_term_match in ac.find_iter(&search_content[..]) {
+                matches.push((search_term_match.start(), search_term_match.end()));
+            }
+            let mut index: usize = 0;
+            for (start, end) in matches.iter() {
+                dom.append(
+                    &replacement_node,
+                    AppendNode(Node::new(NodeData::Text {
+                        contents: RefCell::new(search_content[index..*start].into()),
+                    })),
+                );
+                let new_mark_node_text = Node::new(NodeData::Text {
+                    contents: RefCell::new(search_content[*start..*end].into()),
                 });
-                let search_pattern: Vec<&str> = self.search_term?.split(' ').collect();
-                let ac = AhoCorasickBuilder::new()
-                    .ascii_case_insensitive(true)
-                    .build(search_pattern);
-                for grandchild in child.children.borrow().iter() {
-                    if let NodeData::Text { ref contents } = grandchild.data {
-                        let mut matches = vec![];
-                        let search_content = contents.borrow();
-                        for search_term_match in ac.find_iter(&search_content[..]) {
-                            matches.push((search_term_match.start(), search_term_match.end()));
-                        }
-                        let mut index: usize = 0;
-                        for (start, end) in matches.iter() {
-                            dom.append(
-                                &replacement_node,
-                                AppendNode(Node::new(NodeData::Text {
-                                    contents: RefCell::new(search_content[index..*start].into()),
-                                })),
-                            );
-                            let new_mark_node_text = Node::new(NodeData::Text {
-                                contents: RefCell::new(search_content[*start..*end].into()),
-                            });
-                            let new_mark_node = if *already_matched {
-                                Node::new(NodeData::Element {
-                                    name: QualName::new(None, ns!(), local_name!("mark")),
-                                    attrs: RefCell::new(vec![]),
-                                    template_contents: RefCell::new(None),
-                                    mathml_annotation_xml_integration_point: false,
-                                })
-                            } else {
-                                let search_attribute = Attribute {
-                                    name: QualName::new(None, ns!(), local_name!("id")),
-                                    value: "search-match".into(),
-                                };
-                                *already_matched = true;
-                                Node::new(NodeData::Element {
-                                    name: QualName::new(None, ns!(), local_name!("mark")),
-                                    attrs: RefCell::new(vec![search_attribute]),
-                                    template_contents: RefCell::new(None),
-                                    mathml_annotation_xml_integration_point: false,
-                                })
-                            };
-                            dom.append(&new_mark_node, NodeOrText::AppendNode(new_mark_node_text));
-                            dom.append(&replacement_node, NodeOrText::AppendNode(new_mark_node));
-                            index = *end;
-                        }
-                        dom.append(
-                            &replacement_node,
-                            AppendNode(Node::new(NodeData::Text {
-                                contents: RefCell::new(search_content[index..].into()),
-                            })),
-                        );
-                    }
-                }
-                if replacement_node.children.borrow().is_empty() {
-                    return None;
+                let new_mark_node = if *already_matched {
+                    Node::new(NodeData::Element {
+                        name: QualName::new(None, ns!(), local_name!("mark")),
+                        attrs: RefCell::new(vec![]),
+                        template_contents: RefCell::new(None),
+                        mathml_annotation_xml_integration_point: false,
+                    })
                 } else {
-                    return Some(replacement_node);
-                }
+                    let search_attribute = Attribute {
+                        name: QualName::new(None, ns!(), local_name!("id")),
+                        value: "search-match".into(),
+                    };
+                    *already_matched = true;
+                    Node::new(NodeData::Element {
+                        name: QualName::new(None, ns!(), local_name!("mark")),
+                        attrs: RefCell::new(vec![search_attribute]),
+                        template_contents: RefCell::new(None),
+                        mathml_annotation_xml_integration_point: false,
+                    })
+                };
+                dom.append(&new_mark_node, NodeOrText::AppendNode(new_mark_node_text));
+                dom.append(&replacement_node, NodeOrText::AppendNode(new_mark_node));
+                index = *end;
+            }
+            dom.append(
+                &replacement_node,
+                AppendNode(Node::new(NodeData::Text {
+                    contents: RefCell::new(search_content[index..].into()),
+                })),
+            );
+            if replacement_node.children.borrow().is_empty() {
+                return None;
+            } else {
+                return Some(replacement_node);
             }
         }
         None
     }
 
-    //     fn replacement_node(&self, child: &mut Handle, dom: &mut RcDom) -> Option<Rc<Node>> {
-    //         if let NodeData::Element { ref name, .. } = child.data {
-    //             if &*name.local == "p" {
-    //                 let new_paragraph_node = Node::new(NodeData::Element {
-    //                     name: QualName::new(None, ns!(), local_name!("p")),
-    //                     attrs: RefCell::new(vec![]),
-    //                     template_contents: RefCell::new(None),
-    //                     mathml_annotation_xml_integration_point: false,
-    //                 });
-    //                 for grandchild in child.children.borrow().iter() {
-    //                     if let NodeData::Text { ref contents } = grandchild.data {
-    //                         let search_pattern = self.search_term?;
-    //                         let ac = AhoCorasickBuilder::new()
-    //                             .ascii_case_insensitive(true)
-    //                             .build(vec![search_pattern]);
-    //                         let mut matches = vec![];
-    //                         let search_content = contents.borrow();
-    //                         for search_term_match in ac.find_iter(&search_content[..]) {
-    //                             matches.push((search_term_match.start(), search_term_match.end()));
-    //                         }
-    //                         if !matches.is_empty() {
-    //                             //let new_paragraph_node = Node::new(NodeData::Element {
-    //                             //  name: QualName::new(None, ns!(), local_name!("p")),
-    //                             //attrs: RefCell::new(vec![]),
-    //                             // template_contents: RefCell::new(None),
-    //                             // mathml_annotation_xml_integration_point: false,
-    //                             //});
-    //                             let mut index: usize = 0;
-    //                             for (start, end) in matches.iter() {
-    //                                 dom.append(
-    //                                     &new_paragraph_node,
-    //                                     AppendNode(Node::new(NodeData::Text {
-    //                                         contents: RefCell::new(
-    //                                             search_content[index..*start].into(),
-    //                                         ),
-    //                                     })),
-    //                                 );
-    //                                 let new_mark_node_text = Node::new(NodeData::Text {
-    //                                     contents: RefCell::new(search_content[*start..*end].into()),
-    //                                 });
-    //                                 let new_mark_node = Node::new(NodeData::Element {
-    //                                     name: QualName::new(None, ns!(), local_name!("mark")),
-    //                                     attrs: RefCell::new(vec![]),
-    //                                     template_contents: RefCell::new(None),
-    //                                     mathml_annotation_xml_integration_point: false,
-    //                                 });
-    //                                 dom.append(
-    //                                     &new_mark_node,
-    //                                     NodeOrText::AppendNode(new_mark_node_text),
-    //                                 );
-    //                                 dom.append(
-    //                                     &new_paragraph_node,
-    //                                     NodeOrText::AppendNode(new_mark_node),
-    //                                 );
-    //                                 index = *end;
-    //                             }
-    //                             dom.append(
-    //                                 &new_paragraph_node,
-    //                                 AppendNode(Node::new(NodeData::Text {
-    //                                     contents: RefCell::new(search_content[index..].into()),
-    //                                 })),
-    //                             );
-    //                         }
-    //                     }
-    //                 }
-    //                 if new_paragraph_node.children.borrow().is_empty() {
-    //                     return None;
-    //                 } else {
-    //                     return Some(new_paragraph_node);
-    //                 }
-    //             }
-    //         }
-    //         None
-    //     }
-    //
     pub fn make_parser() -> driver::Parser<RcDom> {
         driver::parse_fragment(
             RcDom::default(),
