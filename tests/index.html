@@ -9,6 +9,7 @@
     <script type="module">
       import init, {
         highlight_search_terms as highlight,
+        html_to_text as htmlToText,
       } from "./searchlite.js";
       await init();
       const highlightedHtml = highlight(
@@ -17,7 +18,16 @@
       );
       const element = document.getElementById("app");
       element.innerHTML=highlightedHtml;
+
+      const outputText = htmlToText(`<ul>
+  <li>Item one</li>
+  <li>Item two</li>
+  <li>Item three</li>
+</ul>`);
+const preElement = document.getElementById("text");
+preElement.innerHTML = outputText;
     </script>
     <div id="app"></div>
+    <pre id="text"></pre>
   </body>
 </html>
