@@ -1,6 +1,7 @@
 mod html_search;
 mod utils;
 
+//use html2text::from_read;
 use html_search::search_html;
 use wasm_bindgen::prelude::*;
 
@@ -19,8 +20,8 @@ extern "C" {
 }
 
 // macro_rules! console_log {
-//     ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
-// }
+//      ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
+//  }
 
 #[wasm_bindgen]
 extern "C" {
@@ -31,3 +32,10 @@ extern "C" {
 pub fn highlight_search_terms(input_string: &str, search_pattern: &str) -> String {
     search_html(input_string, search_pattern)
 }
+
+//#[wasm_bindgen]
+//pub fn html_to_text(html: &str) -> String {
+//    let output_text_columns: usize = 72;
+//    let text = from_read(html.as_bytes(), output_text_columns);
+//    text
+//}
