@@ -31,7 +31,7 @@ use aho_corasick::AhoCorasickBuilder;
 use dom::{Handle, Node, NodeData, RcDom, SerializableHandle};
 use html5ever::{
     driver,
-    interface::tree_builder::{AppendNode, NodeOrText, TreeSink},
+    interface::tree_builder::{NodeOrText, TreeSink},
     local_name, namespace_url, ns,
     serialize::{serialize, SerializeOpts},
     tendril::*,
@@ -89,7 +89,9 @@ impl<'a> Builder<'a> {
                     {
                         // node should be a TextNode and so have no children to check so OK to
                         // continue here
-                        dom.reparent_children(&value, &parent);
+                        for new_child_node in value.iter() {
+                            dom.append(&parent, NodeOrText::AppendNode(new_child_node.clone()));
+                        }
                         removed.push(node);
                         continue;
                     };
@@ -128,14 +130,9 @@ impl<'a> Builder<'a> {
         child: &mut Handle,
         dom: &mut RcDom,
         already_matched: &mut bool,
-    ) -> Option<Rc<Node>> {
+    ) -> Option<Vec<Rc<Node>>> {
+        let mut replacement_nodes = Vec::new();
         if let NodeData::Text { ref contents, .. } = child.data {
-            let replacement_node = Node::new(NodeData::Element {
-                name: QualName::new(None, ns!(), "div".into()),
-                attrs: RefCell::new(vec![]),
-                template_contents: RefCell::new(None),
-                mathml_annotation_xml_integration_point: false,
-            });
             let search_pattern: Vec<&str> = self.search_term?.split(' ').collect();
             let ac = AhoCorasickBuilder::new()
                 .ascii_case_insensitive(true)
@@ -147,12 +144,9 @@ impl<'a> Builder<'a> {
             }
             let mut index: usize = 0;
             for (start, end) in matches.iter() {
-                dom.append(
-                    &replacement_node,
-                    AppendNode(Node::new(NodeData::Text {
-                        contents: RefCell::new(search_content[index..*start].into()),
-                    })),
-                );
+                replacement_nodes.push(Node::new(NodeData::Text {
+                    contents: RefCell::new(search_content[index..*start].into()),
+                }));
                 let new_mark_node_text = Node::new(NodeData::Text {
                     contents: RefCell::new(search_content[*start..*end].into()),
                 });
@@ -177,19 +171,16 @@ impl<'a> Builder<'a> {
                     })
                 };
                 dom.append(&new_mark_node, NodeOrText::AppendNode(new_mark_node_text));
-                dom.append(&replacement_node, NodeOrText::AppendNode(new_mark_node));
+                replacement_nodes.push(new_mark_node);
                 index = *end;
             }
-            dom.append(
-                &replacement_node,
-                AppendNode(Node::new(NodeData::Text {
-                    contents: RefCell::new(search_content[index..].into()),
-                })),
-            );
-            if replacement_node.children.borrow().is_empty() {
+            replacement_nodes.push(Node::new(NodeData::Text {
+                contents: RefCell::new(search_content[index..].into()),
+            }));
+            if replacement_nodes.is_empty() {
                 return None;
             } else {
-                return Some(replacement_node);
+                return Some(replacement_nodes);
             }
         }
         None
