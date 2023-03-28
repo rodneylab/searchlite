@@ -1,6 +1,6 @@
 [package]
 name = "searchlite"
-version = "0.0.2"
+version = "0.0.3"
 authors = ["Rodney Johnson <ask@rodneylab.com>"]
 edition = "2021"
 license = "BSD-3-Clause"
